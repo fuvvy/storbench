@@ -4,18 +4,13 @@
 #include <unistd.h>
 #include <sys/types.h>
 
-/* Bits per X */
-#define KILOBITS 1000
-#define MEGABITS 1000000
-#define GIGABITS 1000000000
-
-/* Microseconds per X */
-#define MILLISECONDS	1000
-#define SECONDS			1000000
+#define MAX_LABEL_TIME	3
+#define MAX_LABEL_THRU	5
 
 void Fclose(FILE *stream)
 {
-	if (fclose(stream) == EOF) {
+	if (fclose(stream) == EOF)
+	{
 		perror("fclose");
 	}
 }
@@ -26,6 +21,39 @@ void usage(char *prog)
 	printf("storbench <filename> <size>\n");
 	printf("\tfilename\tName of the output file\n");
 	printf("\tsize\t\tNumber of bytes to write to the output file\n");
+}
+
+int scale_iter(const uint64_t in_time, int scale_factors[], int i)
+{
+	if (in_time >= scale_factors[i]) { return i; }
+	scale_iter(in_time, scale_factors, ++i);
+}
+	
+void scale_time(uint64_t in_time, float *out_scaled, char *out_label)
+{
+	int scale_factors[3] = {
+		1000000,	/* seconds per microsecond */
+		1000,		/* milliseconds per microsecond */
+		1			/* base microsecond */
+	};
+	char *labels[3] = { "s", "ms", "us" };
+	int r = scale_iter(in_time, scale_factors, 0);
+	*out_scaled =  (float)in_time / scale_factors[r];
+	strncpy(out_label, labels[r], 3);
+}
+
+void scale_throughput(uint64_t in_rate, float *out_scaled, char *out_label)
+{
+	int scale_factors[4] = {
+		1000000000,		/* gigabits per sec */
+		1000000,		/* megabits per sec */
+		1000,			/* kilobits per sec */
+		1				/* base bits*/
+	};
+	char *labels[4] = { "Gbps", "Mbps", "Kbps", "bps" };
+	int r = scale_iter(in_rate, scale_factors, 0);
+	*out_scaled =  (float)in_rate / scale_factors[r];
+	strncpy(out_label, labels[r], 5);
 }
 
 int main(int argc, char * argv[])
@@ -166,76 +194,49 @@ int main(int argc, char * argv[])
 	free(buf);
 	Fclose(fd_inout);
 	
+	/* Calculate raw values */
 	size_t bits = bytes_total * 8;
 	uint64_t delta_write_us = (write_test_end.tv_sec - write_test_start.tv_sec) * 1000000 + (write_test_end.tv_nsec - write_test_start.tv_nsec) / 1000;
 	uint64_t delta_read_us = (read_test_end.tv_sec - read_test_start.tv_sec) * 1000000 + (read_test_end.tv_nsec - read_test_start.tv_nsec) / 1000;
 	float bits_write_s = bits / (float)((double)delta_write_us / (double)1000000);
 	float bits_read_s = bits / (float)((double)delta_read_us / (double)1000000);
 	
-	printf("%-15s %-15d\n", "bytes written", bytes_total);
+	printf("%d bytes written to %s\n", bytes_total, argv[1]);
 	
-	/* Scale seconds */
-	if (delta_write_us >= SECONDS)
-	{
-		printf("%-15s ~%.2f s\n", "elapsed time", (float)delta_write_us / SECONDS);
-	}
-	else if (delta_write_us >= MILLISECONDS)
-	{
-		printf("%-15s ~%.2f ms\n", "elapsed time", (float)delta_write_us / MILLISECONDS);
-	}
-	else /* Microseconds */
-	{
-		printf("%-15s ~%.2f us\n", "elapsed time", (float)delta_write_us);
-	}
+	/* Write results */
+	
+	/* Scale time readout */
+	float write_time_scaled;
+	char write_time_label[MAX_LABEL_TIME];
+	scale_time(delta_write_us, &write_time_scaled, write_time_label);
 	
 	/* Scale throughput readout */
-	if (bits_write_s >= GIGABITS)
-	{
-		printf("%-15s ~%.2f Gbps\n", "throughput", bits_write_s / GIGABITS);
-	}
-	else if (bits_write_s >= MEGABITS)
-	{
-		printf("%-15s ~%.2f Mbps\n", "throughput", bits_write_s / MEGABITS);
-	}
-	else if (bits_write_s >= KILOBITS)
-	{
-		printf("%-15s ~%.0f Kbps\n", "throughput", bits_write_s / KILOBITS);
-	}
-	else /* BITS */
-	{
-		printf("%-15s ~%.0f bps\n", "throughput", bits_write_s);
-	}
+	float write_speed_scaled;
+	char write_speed_label[MAX_LABEL_THRU];
+	scale_throughput(bits_write_s, &write_speed_scaled, write_speed_label);
 	
-	/* Scale seconds */
-	if (delta_read_us >= SECONDS)
-	{
-		printf("%-15s ~%.2f s\n", "elapsed time", (float)delta_read_us / SECONDS);
-	}
-	else if (delta_read_us >= MILLISECONDS)
-	{
-		printf("%-15s ~%.2f ms\n", "elapsed time", (float)delta_read_us / MILLISECONDS);
-	}
-	else /* Microseconds */
-	{
-		printf("%-15s ~%.2f us\n", "elapsed time", (float)delta_read_us);
-	}
+	/* Read results */
+	
+	/* Scale time readout */
+	float read_time_scaled;
+	char read_time_label[MAX_LABEL_TIME];
+	scale_time(delta_read_us, &read_time_scaled, read_time_label);
 	
 	/* Scale throughput readout */
-	if (bits_read_s >= GIGABITS)
-	{
-		printf("%-15s ~%.2f Gbps\n", "throughput", bits_read_s / GIGABITS);
-	}
-	else if (bits_read_s >= MEGABITS)
-	{
-		printf("%-15s ~%.2f Mbps\n", "throughput", bits_read_s / MEGABITS);
-	}
-	else if (bits_read_s >= KILOBITS)
-	{
-		printf("%-15s ~%.0f Kbps\n", "throughput", bits_read_s / KILOBITS);
-	}
-	else /* BITS */
-	{
-		printf("%-15s ~%.0f bps\n", "throughput", bits_read_s);
-	}
+	float read_speed_scaled;
+	char read_speed_label[MAX_LABEL_THRU];
+	scale_throughput(bits_read_s, &read_speed_scaled, read_speed_label);
+	
+	/* Format nicely and print results */
+	char read_time_fmt[15], write_time_fmt[15],
+		 read_thru_fmt[15], write_thru_fmt[15];
+	snprintf(read_time_fmt, 15, "%.2f %s", read_time_scaled, read_time_label);
+	snprintf(write_time_fmt, 15, "%.2f %s", write_time_scaled, write_time_label);
+	snprintf(read_thru_fmt, 15, "%.2f %s", read_speed_scaled, read_speed_label);
+	snprintf(write_thru_fmt, 15, "%.2f %s", write_speed_scaled, write_speed_label);
+	printf("%-15s %-10s %-10s\n", "               ", "read", "write");
+	printf("%-15s %-10s %-10s\n", "elapsed time", read_time_fmt, write_time_fmt);
+	printf("%-15s %-10s %-10s\n", "throughput", read_thru_fmt, write_thru_fmt);
+	
 	exit(EXIT_SUCCESS);
 }
