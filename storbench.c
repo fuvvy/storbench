@@ -32,9 +32,9 @@ int scale_iter(const uint64_t in_time, int scale_factors[], int i)
 void scale_time(uint64_t in_time, float *out_scaled, char *out_label)
 {
 	int scale_factors[3] = {
-		1000000,	/* seconds per microsecond */
-		1000,		/* milliseconds per microsecond */
-		1			/* base microsecond */
+		1000000,	/* microseconds per sec */
+		1000,		/* milliseconds per sec */
+		1			/* seconds per sec */
 	};
 	char *labels[3] = { "s", "ms", "us" };
 	int r = scale_iter(in_time, scale_factors, 0);
@@ -45,10 +45,10 @@ void scale_time(uint64_t in_time, float *out_scaled, char *out_label)
 void scale_throughput(uint64_t in_rate, float *out_scaled, char *out_label)
 {
 	int scale_factors[4] = {
-		1000000000,		/* gigabits per sec */
-		1000000,		/* megabits per sec */
-		1000,			/* kilobits per sec */
-		1				/* base bits*/
+		1000000000,		/* bits per gigabit */
+		1000000,		/* bits per megabit */
+		1000,			/* bits per kilobits */
+		1				/* bits per bit*/
 	};
 	char *labels[4] = { "Gbps", "Mbps", "Kbps", "bps" };
 	int r = scale_iter(in_rate, scale_factors, 0);
