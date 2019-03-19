@@ -130,13 +130,13 @@ int main(int argc, char * argv[])
 	}
 	if (!file_inout[0])
 	{
-		fprintf(stderr, "File name must be provided\n");
+		fprintf(stderr, "ofile parameter is required\n");
 		usage(argv[0]);
 		exit(EXIT_FAILURE);
 	}
 	if (bytes_total == 0)
 	{
-		fprintf(stderr, "Byte size must be provided\n");
+		fprintf(stderr, "nbytes must be a positive integer\n");
 		usage(argv[0]);
 		exit(EXIT_FAILURE);
 	}
