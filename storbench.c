@@ -1,4 +1,5 @@
 #include <time.h>
+#include <math.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,6 +7,7 @@
 
 #define MAX_LABEL_TIME	3
 #define MAX_LABEL_THRU	5
+#define MAX_LABEL_TOTAL	6
 
 void Fclose(FILE *stream)
 {
@@ -60,6 +62,40 @@ void scale_throughput(uint64_t in_rate, float *out_scaled, char *out_label)
 	int r = scale_iter(in_rate, scale_factors, 0);
 	*out_scaled =  (float)in_rate / scale_factors[r];
 	strncpy(out_label, labels[r], 5);
+}
+
+void scale_bytes(uint64_t in_bytes, float *out_scaled, char *out_label)
+{
+	int scale_factors[4] = {
+		1073741824,		/* bytes per gigabyte */
+		1048576,		/* bytes per megabyte */
+		1024,			/* bytes per kilobyte */
+		1				/* bytes per byte*/
+	};
+	char *labels[4] = { "GB", "MB", "KB", "bytes" };
+	int r = scale_iter(in_bytes, scale_factors, 0);
+	*out_scaled =  (float)in_bytes / scale_factors[r];
+	strncpy(out_label, labels[r], 6);
+}
+
+void progress_init(char *label)
+{
+	printf("%s: 0%%\r", label);
+	fflush(stdout);
+}
+
+void progress_update(char *label, size_t total, size_t delta)
+{
+	static size_t bytes_accum = 0;
+	bytes_accum += delta;
+	double progress = ((double)bytes_accum / total) * 100;
+	printf("%s: %.0f%%\r", label, progress);
+	fflush(stdout);
+}
+
+void progress_term(char *label)
+{
+	printf("%s: 100%%\n", label);
 }
 
 int main(int argc, char * argv[])
@@ -137,7 +173,8 @@ int main(int argc, char * argv[])
 	struct timespec
 		read_test_start, read_test_end,
 		write_test_start, write_test_end;
-	size_t bytes_remaining = bytes_total;
+	size_t bytes_remaining = bytes_total, io_bytes;
+	progress_init("writing");
 	if (bytes_remaining <= chunk_size)
 	{
 		if ((buf = malloc(sizeof(char) * bytes_remaining)) == NULL)
@@ -171,6 +208,7 @@ int main(int argc, char * argv[])
 			exit(EXIT_FAILURE);
 		}
 		clock_gettime(CLOCK_REALTIME, &write_test_end);
+		progress_term("writing");
 	}
 	else
 	{
@@ -192,7 +230,7 @@ int main(int argc, char * argv[])
 				char byte = (char)((int)256 * rand() / (RAND_MAX + 1.0));
 				memset(ptr++, byte, sizeof(char));
 			}
-			if (fwrite(buf, sizeof(char), chunk_size, fd_inout) != chunk_size)
+			if ((io_bytes = fwrite(buf, sizeof(char), chunk_size, fd_inout)) != chunk_size)
 			{
 				perror("fwrite");
 				Fclose(fd_inout);
@@ -201,6 +239,7 @@ int main(int argc, char * argv[])
 			}
 			bytes_remaining -= chunk_size;
 			ptr = buf;
+			progress_update("writing", bytes_total, io_bytes);
 		}
 		if (bytes_remaining > 0)
 		{
@@ -220,13 +259,19 @@ int main(int argc, char * argv[])
 			exit(EXIT_FAILURE);
 		}
 		clock_gettime(CLOCK_REALTIME, &write_test_end);
+		progress_term("writing");
 	}
 	
 	/* Bench read throughput */
 	rewind(fd_inout);
+	progress_init("reading");
 	clock_gettime(CLOCK_REALTIME, &read_test_start);
-	while (fread(buf, sizeof(char), chunk_size, fd_inout), !feof(fd_inout) && !ferror(fd_inout));
+	while ((io_bytes = fread(buf, sizeof(char), chunk_size, fd_inout)), !feof(fd_inout) && !ferror(fd_inout))
+	{
+		progress_update("reading", bytes_total, io_bytes);
+	}
 	clock_gettime(CLOCK_REALTIME, &read_test_end);
+	progress_term("reading");
 	if (ferror(fd_inout))
 	{
 		perror("fread");
@@ -277,10 +322,15 @@ int main(int argc, char * argv[])
 	char read_speed_label[MAX_LABEL_THRU];
 	scale_throughput(bits_read_s, &read_speed_scaled, read_speed_label);
 	
+	/* Scale total bytes written */
+	float total_bytes_scaled;
+	char total_bytes_label[MAX_LABEL_TOTAL];
+	scale_bytes(bytes_total, &total_bytes_scaled, total_bytes_label);
+	
 	/* Format nicely and print results */
 	char read_time_fmt[15], write_time_fmt[15],
 		 read_thru_fmt[15], write_thru_fmt[15];
-	printf("%zu bytes written to %s\n", bytes_total, file_inout);
+	printf("Completed %.2f %s benchmark on %s\n", total_bytes_scaled, total_bytes_label, file_inout);
 	snprintf(read_time_fmt, 15, "%.2f %s", read_time_scaled, read_time_label);
 	snprintf(write_time_fmt, 15, "%.2f %s", write_time_scaled, write_time_label);
 	snprintf(read_thru_fmt, 15, "%.2f %s", read_speed_scaled, read_speed_label);
