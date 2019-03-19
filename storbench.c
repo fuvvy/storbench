@@ -1,7 +1,7 @@
 #include <time.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <sys/types.h>
 
 #define MAX_LABEL_TIME	3
@@ -15,12 +15,18 @@ void Fclose(FILE *stream)
 	}
 }
 
-void usage(char *prog)
+void usage(char *proc)
 {
-	printf("Write random bytes to a file and benchmark the performance\n");
-	printf("storbench <filename> <size>\n");
-	printf("\tfilename\tName of the output file\n");
-	printf("\tsize\t\tNumber of bytes to write to the output file\n");
+	char *usage = "Usage: %s [-d] [-b nbytes] [-f ofile]\n"
+				  "Write random bytes to a file and benchmark the performance\n"
+				  "Flags\n"
+				  "  -b nbytes\n"
+				  "\tSpecifies the number of bytes to read and write from ofile\n"
+				  "  -f ofile\n"
+				  "\tSpecifies the name of the file to base the benchmark on\n"
+				  "  -d\n"
+				  "\tDelete file ofile on completion\n";
+	fprintf(stderr, usage, proc);
 }
 
 int scale_iter(const uint64_t in_time, int scale_factors[], int i)
@@ -58,20 +64,64 @@ void scale_throughput(uint64_t in_rate, float *out_scaled, char *out_label)
 
 int main(int argc, char * argv[])
 {
-	if (argc != 3)
+	int opt;
+
+	size_t bytes_total = 0;
+	char file_inout[PATH_MAX] = {0};
+	enum { FILE_KEEP_MODE, FILE_DELETE_MODE } mode = FILE_KEEP_MODE;
+	while ((opt = getopt(argc, argv, ":df:b:")) != -1)
 	{
-		fprintf(stderr, "Wrong number of args!\n\n");
+		switch (opt)
+		{
+		case 'd':
+			mode = FILE_DELETE_MODE;
+			break;
+		case 'f':
+			snprintf(file_inout, PATH_MAX, "%s", optarg);
+			break;
+		case 'b':
+			bytes_total = atol(optarg);
+			break;
+		case ':':
+			fprintf(stderr, "Option %c needs a value\n", optopt);
+			usage(argv[0]);
+			exit(EXIT_FAILURE);
+		case '?':
+			fprintf(stderr, "Unrecognized option %c\n", optopt);
+			usage(argv[0]);
+			exit(EXIT_FAILURE);
+		}
+	}
+	if (!file_inout[0])
+	{
+		fprintf(stderr, "File name must be provided\n");
+		usage(argv[0]);
+		exit(EXIT_FAILURE);
+	}
+	if (bytes_total == 0)
+	{
+		fprintf(stderr, "Byte size must be provided\n");
+		usage(argv[0]);
+		exit(EXIT_FAILURE);
+	}
+	if (optind < argc)
+	{
+		fprintf(stderr, "Invalid arguments: ");
+		while (optind < argc)
+		{
+			fprintf(stderr, "%s ", argv[optind++]);
+		}
+		fprintf(stderr, "\n");
 		usage(argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
-	size_t bytes_total;
-	if ((bytes_total = atol(argv[2])) == 0)
+	FILE *fd_inout;
+	if ((fd_inout = fopen(file_inout, "w+b")) == NULL)
 	{
-		perror("atol");
+		perror("fopen");
 		exit(EXIT_FAILURE);
 	}
-	size_t bytes_remaining = bytes_total;
 
 	/* Get the current heap size */
 	/* Stay well below limit so we don't hog memory */
@@ -82,18 +132,12 @@ int main(int argc, char * argv[])
 		exit(EXIT_FAILURE);
 	}
 	size_t chunk_size = (size_t)(data_limit.rlim_cur / 2);
-
-	FILE *fd_inout;
-	if ((fd_inout = fopen(argv[1], "w+b")) == NULL)
-	{
-		perror("fopen");
-		exit(EXIT_FAILURE);
-	}
 	
 	char *buf, *ptr;
 	struct timespec
 		read_test_start, read_test_end,
 		write_test_start, write_test_end;
+	size_t bytes_remaining = bytes_total;
 	if (bytes_remaining <= chunk_size)
 	{
 		if ((buf = malloc(sizeof(char) * bytes_remaining)) == NULL)
@@ -193,6 +237,14 @@ int main(int argc, char * argv[])
 	
 	free(buf);
 	Fclose(fd_inout);
+	if (mode == FILE_DELETE_MODE)
+	{
+		if (unlink(file_inout) == -1)
+		{
+			perror("unlink");
+			exit(EXIT_FAILURE);
+		}
+	}
 	
 	/* Calculate raw values */
 	size_t bits = bytes_total * 8;
@@ -200,8 +252,6 @@ int main(int argc, char * argv[])
 	uint64_t delta_read_us = (read_test_end.tv_sec - read_test_start.tv_sec) * 1000000 + (read_test_end.tv_nsec - read_test_start.tv_nsec) / 1000;
 	float bits_write_s = bits / (float)((double)delta_write_us / (double)1000000);
 	float bits_read_s = bits / (float)((double)delta_read_us / (double)1000000);
-	
-	printf("%d bytes written to %s\n", bytes_total, argv[1]);
 	
 	/* Write results */
 	
@@ -230,6 +280,7 @@ int main(int argc, char * argv[])
 	/* Format nicely and print results */
 	char read_time_fmt[15], write_time_fmt[15],
 		 read_thru_fmt[15], write_thru_fmt[15];
+	printf("%zu bytes written to %s\n", bytes_total, file_inout);
 	snprintf(read_time_fmt, 15, "%.2f %s", read_time_scaled, read_time_label);
 	snprintf(write_time_fmt, 15, "%.2f %s", write_time_scaled, write_time_label);
 	snprintf(read_thru_fmt, 15, "%.2f %s", read_speed_scaled, read_speed_label);
