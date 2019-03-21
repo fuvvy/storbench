@@ -86,9 +86,9 @@ void progress_init(char *label)
 
 void progress_update(char *label, size_t total, size_t delta)
 {
-	static size_t bytes_accum = 0;
-	bytes_accum += delta;
-	double progress = ((double)bytes_accum / total) * 100;
+	static size_t accum = 0;
+	accum += delta;
+	double progress = ((double)accum / total) * 100;
 	printf("%s: %.0f%%\r", label, progress);
 	fflush(stdout);
 }
@@ -101,7 +101,6 @@ void progress_term(char *label)
 int main(int argc, char * argv[])
 {
 	int opt;
-
 	size_t bytes_total = 0;
 	char file_inout[PATH_MAX] = {0};
 	enum { FILE_KEEP_MODE, FILE_DELETE_MODE } mode = FILE_KEEP_MODE;
@@ -209,6 +208,29 @@ int main(int argc, char * argv[])
 		}
 		clock_gettime(CLOCK_REALTIME, &write_test_end);
 		progress_term("writing");
+		
+		/* Bench read throughput */
+		rewind(fd_inout);
+		progress_init("reading");
+		bytes_remaining = bytes_total;
+		clock_gettime(CLOCK_REALTIME, &read_test_start);
+		io_bytes = fread(buf, sizeof(char), bytes_remaining, fd_inout);
+		if (io_bytes != bytes_remaining)
+		{
+			perror("fwrite");
+			Fclose(fd_inout);
+			free(buf);
+			exit(EXIT_FAILURE);
+		}
+		clock_gettime(CLOCK_REALTIME, &read_test_end);
+		progress_term("reading");
+		if (ferror(fd_inout))
+		{
+			perror("fread");
+			Fclose(fd_inout);
+			free(buf);
+			exit(EXIT_FAILURE);
+		}
 	}
 	else
 	{
@@ -260,26 +282,47 @@ int main(int argc, char * argv[])
 		}
 		clock_gettime(CLOCK_REALTIME, &write_test_end);
 		progress_term("writing");
+		
+		/* Bench read throughput */
+		rewind(fd_inout);
+		progress_init("reading");
+		bytes_remaining = bytes_total;
+		clock_gettime(CLOCK_REALTIME, &read_test_start);
+		while (bytes_remaining >= chunk_size && !feof(fd_inout) && !ferror(fd_inout))
+		{
+			bytes_remaining -= chunk_size;
+			io_bytes = fread(buf, sizeof(char), chunk_size, fd_inout);
+			progress_update("reading", bytes_total, io_bytes);
+		}
+		if (bytes_remaining > 0)
+		{
+			io_bytes = fread(buf, sizeof(char), bytes_remaining, fd_inout);
+			if (io_bytes != bytes_remaining)
+			{
+				perror("fwrite");
+				Fclose(fd_inout);
+				free(buf);
+				exit(EXIT_FAILURE);
+			}
+			progress_update("reading", bytes_total, io_bytes);
+		}
+		if (fsync(fileno(fd_inout)) == -1)
+		{
+			perror("fsync");
+			Fclose(fd_inout);
+			free(buf);
+			exit(EXIT_FAILURE);
+		}
+		clock_gettime(CLOCK_REALTIME, &read_test_end);
+		progress_term("reading");
+		if (ferror(fd_inout))
+		{
+			perror("fread");
+			Fclose(fd_inout);
+			free(buf);
+			exit(EXIT_FAILURE);
+		}
 	}
-	
-	/* Bench read throughput */
-	rewind(fd_inout);
-	progress_init("reading");
-	clock_gettime(CLOCK_REALTIME, &read_test_start);
-	while ((io_bytes = fread(buf, sizeof(char), chunk_size, fd_inout)), !feof(fd_inout) && !ferror(fd_inout))
-	{
-		progress_update("reading", bytes_total, io_bytes);
-	}
-	clock_gettime(CLOCK_REALTIME, &read_test_end);
-	progress_term("reading");
-	if (ferror(fd_inout))
-	{
-		perror("fread");
-		Fclose(fd_inout);
-		free(buf);
-		exit(EXIT_FAILURE);
-	}
-	
 	free(buf);
 	Fclose(fd_inout);
 	if (mode == FILE_DELETE_MODE)
