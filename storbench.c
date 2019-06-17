@@ -5,6 +5,13 @@
 #include <stdlib.h>
 #include <sys/types.h>
 
+#ifdef __linux__
+#include <stdint.h>
+#include <string.h>
+#include <sys/resource.h>
+#include <linux/limits.h>
+#endif
+
 #define MAX_LABEL_TIME	3
 #define MAX_LABEL_THRU	5
 #define MAX_LABEL_TOTAL	6
